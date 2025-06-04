@@ -29,6 +29,7 @@ class WebcamApp:
         self.auto_refresh = False
         self.refresh_thread = None
         self.refresh_interval = 1.0  # 默认1秒刷新一次
+        self.refresh_callbacks = []  # 存储UI刷新回调
 
     def start_video_stream(self):
         """启动视频流线程"""
@@ -46,6 +47,11 @@ class WebcamApp:
         self.running = False
         if self.video_thread and self.video_thread.is_alive():
             self.video_thread.join()
+
+    def register_refresh_callback(self, callback):
+        """注册UI刷新回调函数"""
+        if callback not in self.refresh_callbacks:
+            self.refresh_callbacks.append(callback)
 
     def start_auto_refresh(self, interval=1.0):
         """启动自动刷新线程"""
@@ -76,9 +82,14 @@ class WebcamApp:
                 self.start_video_stream()
                 time.sleep(0.5)  # 等待视频流启动
             
+            # 触发所有注册的UI刷新回调
+            for callback in self.refresh_callbacks[:]:
+                try:
+                    callback()
+                except Exception as e:
+                    print(f"刷新回调执行失败: {e}")
+                    
             time.sleep(self.refresh_interval)
-            # 什么都不做，只是保持循环活跃
-            # 实际的刷新操作由前端处理
 
     def video_reader(self, url):
         """持续读取视频流的线程函数"""
@@ -473,10 +484,17 @@ def main(camera_source, port, host, auto_refresh, refresh_interval):
             outputs=[camera_output, zip_archives_list],
         )
         
+        # 创建UI自动刷新函数
+        def ui_refresh_camera():
+            return gr.update(value=app.capture_frame())
+        
         # 定时自动刷新
         if auto_refresh:
             app.start_auto_refresh(refresh_interval)
-            refresh_btn.click(fn=None, every=refresh_interval)
+            # 注册UI刷新回调
+            app.register_refresh_callback(lambda: interface.queue(ui_refresh_camera, outputs=camera_output))
+            # 删除之前的click事件，改为使用自定义刷新逻辑
+            refresh_btn.click(fn=refresh_camera, outputs=[camera_output], every=refresh_interval)
 
     try:
         print("启动摄像头Web界面...")
