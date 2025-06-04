@@ -9,19 +9,20 @@ import gradio as gr
 
 
 class WebcamApp:
-    def __init__(self, camera_index=0):
-        self.camera_index = camera_index
+    def __init__(self, camera_source=0):
+        self.camera_source = camera_source
         self.cap = None
         self.screenshots_dir = "screenshots"
         self.zip_dir = "zip_archives"
+        self.auto_refresh_enabled = False
         Path(self.screenshots_dir).mkdir(exist_ok=True)
         Path(self.zip_dir).mkdir(exist_ok=True)
 
     def initialize_camera(self):
         """初始化摄像头"""
-        self.cap = cv2.VideoCapture(self.camera_index)
+        self.cap = cv2.VideoCapture(self.camera_source)
         if not self.cap.isOpened():
-            raise RuntimeError(f"无法打开摄像头 {self.camera_index}")
+            raise RuntimeError(f"无法打开摄像头 {self.camera_source}")
 
         # 设置摄像头参数
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -176,6 +177,12 @@ class WebcamApp:
 
         return f"已清理 {count} 个压缩包"
 
+    def toggle_auto_refresh(self):
+        """切换自动刷新状态"""
+        self.auto_refresh_enabled = not self.auto_refresh_enabled
+        status = "开启" if self.auto_refresh_enabled else "关闭"
+        return f"自动刷新已{status}"
+
     def cleanup(self):
         """清理资源"""
         if self.cap is not None:
@@ -184,17 +191,29 @@ class WebcamApp:
 
 @click.command()
 @click.help_option("-h", "--help")
-@click.option("--camera-index", "-c", default=0, help="摄像头设备索引 (默认: 0)")
+@click.option("--camera-source", "-c", default="0", help="摄像头设备索引或URL (默认: 0)")
 @click.option("--port", "-p", default=7860, help="Gradio服务端口 (默认: 7860)")
 @click.option("--host", "-s", default="0.0.0.0", help="服务主机地址 (默认: 0.0.0.0)")
-def main(camera_index, port, host):
+def main(camera_source, port, host):
     """启动摄像头Web界面"""
 
-    app = WebcamApp(camera_index)
+    # 尝试将camera_source转换为整数，如果失败则保持为字符串（URL）
+    try:
+        camera_source = int(camera_source)
+    except ValueError:
+        # 保持为字符串，用于URL或其他非数字输入
+        pass
+
+    app = WebcamApp(camera_source)
 
     def refresh_camera():
         """刷新摄像头画面"""
         return app.capture_frame()
+
+    def auto_refresh_handler():
+        """处理自动刷新"""
+        message = app.toggle_auto_refresh()
+        return message
 
     def screenshot_handler():
         """处理截图"""
@@ -239,7 +258,10 @@ def main(camera_index, port, host):
         with gr.Row():
             with gr.Column():
                 camera_output = gr.Image(label="摄像头画面", type="numpy")
-                refresh_btn = gr.Button("刷新画面", variant="primary")
+                with gr.Row():
+                    refresh_btn = gr.Button("刷新画面", variant="primary")
+                    auto_refresh_btn = gr.Button("自动刷新 (0.2s)", variant="secondary")
+                auto_refresh_msg = gr.Textbox(label="自动刷新状态", interactive=False)
 
             with gr.Column():
                 screenshot_btn = gr.Button("截图", variant="secondary")
@@ -289,6 +311,8 @@ def main(camera_index, port, host):
         # 绑定事件
         refresh_btn.click(fn=refresh_camera, outputs=[camera_output])
 
+        auto_refresh_btn.click(fn=auto_refresh_handler, outputs=[auto_refresh_msg])
+
         screenshot_btn.click(
             fn=screenshot_handler,
             outputs=[screenshot_msg, camera_output, screenshot_list],
@@ -319,9 +343,16 @@ def main(camera_index, port, host):
             outputs=[camera_output, zip_archives_list],
         )
 
+        # 自动刷新定时器
+        timer = gr.Timer(0.2)
+        timer.tick(
+            fn=lambda: app.capture_frame() if app.auto_refresh_enabled else None,
+            outputs=[camera_output],
+        )
+
     try:
         print("启动摄像头Web界面...")
-        print(f"摄像头设备: {camera_index}")
+        print(f"摄像头设备: {camera_source}")
         print(f"访问地址: http://{host}:{port}")
 
         interface.launch(server_name=host, server_port=port, share=False, debug=False)
