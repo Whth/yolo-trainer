@@ -9,7 +9,6 @@ import tempfile
 import gradio as gr
 import socket
 import threading
-import numpy as np
 
 
 class WebcamApp:
@@ -25,6 +24,11 @@ class WebcamApp:
         self.running = False
         self.frame_lock = threading.Lock()
         self.video_thread = None
+        
+        # 用于自动刷新控制
+        self.auto_refresh = False
+        self.refresh_thread = None
+        self.refresh_interval = 1.0  # 默认1秒刷新一次
 
     def start_video_stream(self):
         """启动视频流线程"""
@@ -42,6 +46,39 @@ class WebcamApp:
         self.running = False
         if self.video_thread and self.video_thread.is_alive():
             self.video_thread.join()
+
+    def start_auto_refresh(self, interval=1.0):
+        """启动自动刷新线程"""
+        self.refresh_interval = interval
+        if not self.auto_refresh:
+            self.auto_refresh = True
+            if self.refresh_thread is None or not self.refresh_thread.is_alive():
+                self.refresh_thread = threading.Thread(
+                    target=self.auto_refresh_loop,
+                    daemon=True
+                )
+                self.refresh_thread.start()
+            return "自动刷新已启动"
+        return "自动刷新已在运行中"
+
+    def stop_auto_refresh(self):
+        """停止自动刷新"""
+        self.auto_refresh = False
+        if self.refresh_thread and self.refresh_thread.is_alive():
+            self.refresh_thread.join(timeout=1.0)
+        return "自动刷新已停止"
+
+    def auto_refresh_loop(self):
+        """自动刷新循环线程函数"""
+        while self.auto_refresh:
+            # 仅在running状态下进行刷新，避免不必要的连接
+            if not self.running:
+                self.start_video_stream()
+                time.sleep(0.5)  # 等待视频流启动
+            
+            time.sleep(self.refresh_interval)
+            # 什么都不做，只是保持循环活跃
+            # 实际的刷新操作由前端处理
 
     def video_reader(self, url):
         """持续读取视频流的线程函数"""
@@ -223,6 +260,9 @@ class WebcamApp:
 
     def cleanup(self):
         """清理资源"""
+        self.auto_refresh = False
+        if self.refresh_thread and self.refresh_thread.is_alive():
+            self.refresh_thread.join(timeout=1.0)
         self.stop_video_stream()
 
 
@@ -251,7 +291,13 @@ def get_local_ip():
 )
 @click.option("--port", "-p", default=7860, help="Gradio服务端口 (默认: 7860)")
 @click.option("--host", "-s", default="0.0.0.0", help="服务主机地址 (默认: 0.0.0.0)")
-def main(camera_source, port, host):
+@click.option(
+    "--auto-refresh", "-a", is_flag=True, help="启用自动刷新 (默认: 关闭)"
+)
+@click.option(
+    "--refresh-interval", "-i", default=1.0, type=float, help="自动刷新间隔，单位秒 (默认: 1.0)"
+)
+def main(camera_source, port, host, auto_refresh, refresh_interval):
     """启动摄像头Web界面"""
 
     # 尝试将camera_source转换为整数，如果失败则保持为字符串（URL）
@@ -266,6 +312,13 @@ def main(camera_source, port, host):
     def refresh_camera():
         """刷新摄像头画面"""
         return app.capture_frame()
+
+    def toggle_auto_refresh(active, interval=1.0):
+        """切换自动刷新状态"""
+        if active:
+            return app.start_auto_refresh(interval)
+        else:
+            return app.stop_auto_refresh()
 
     def screenshot_handler():
         """处理截图"""
@@ -310,7 +363,23 @@ def main(camera_source, port, host):
         with gr.Row():
             with gr.Column():
                 camera_output = gr.Image(label="摄像头画面", type="numpy")
-                refresh_btn = gr.Button("刷新画面", variant="primary")
+                with gr.Row():
+                    refresh_btn = gr.Button("刷新画面", variant="primary")
+                    auto_refresh_toggle = gr.Checkbox(
+                        label="自动刷新", value=auto_refresh
+                    )
+                    refresh_interval_slider = gr.Slider(
+                        minimum=0.1,
+                        maximum=10.0,
+                        value=refresh_interval,
+                        step=0.1,
+                        label="刷新间隔 (秒)",
+                    )
+                auto_refresh_status = gr.Textbox(
+                    label="自动刷新状态",
+                    value="自动刷新已关闭" if not auto_refresh else "自动刷新已开启",
+                    interactive=False,
+                )
 
             with gr.Column():
                 screenshot_btn = gr.Button("截图", variant="secondary")
@@ -359,6 +428,20 @@ def main(camera_source, port, host):
 
         # 绑定事件
         refresh_btn.click(fn=refresh_camera, outputs=[camera_output])
+        
+        # 自动刷新相关事件
+        auto_refresh_toggle.change(
+            fn=toggle_auto_refresh,
+            inputs=[auto_refresh_toggle, refresh_interval_slider],
+            outputs=[auto_refresh_status],
+        )
+        
+        # 设置自动刷新间隔
+        refresh_interval_slider.change(
+            fn=lambda x, y: toggle_auto_refresh(x, y) if x else "自动刷新已关闭",
+            inputs=[auto_refresh_toggle, refresh_interval_slider],
+            outputs=[auto_refresh_status],
+        )
 
         screenshot_btn.click(
             fn=screenshot_handler,
@@ -389,10 +472,17 @@ def main(camera_source, port, host):
             fn=lambda: (app.capture_frame(), app.get_zip_archives_list()),
             outputs=[camera_output, zip_archives_list],
         )
+        
+        # 定时自动刷新
+        if auto_refresh:
+            app.start_auto_refresh(refresh_interval)
+            refresh_btn.click(fn=None, every=refresh_interval)
 
     try:
         print("启动摄像头Web界面...")
         print(f"摄像头设备: {camera_source}")
+        if auto_refresh:
+            print(f"自动刷新已启用，间隔: {refresh_interval}秒")
 
         # 获取本机IP地址
         local_ip = get_local_ip()
