@@ -3,40 +3,84 @@ import click
 import os
 import zipfile
 import datetime
+import time
 from pathlib import Path
 import tempfile
 import gradio as gr
 import socket
+import threading
+import numpy as np
 
 
 class WebcamApp:
     def __init__(self, camera_source=0):
         self.camera_source = camera_source
-        self.cap = None
         self.screenshots_dir = "screenshots"
         self.zip_dir = "zip_archives"
         Path(self.screenshots_dir).mkdir(exist_ok=True)
         Path(self.zip_dir).mkdir(exist_ok=True)
+        
+        # 用于视频流的多线程控制
+        self.latest_frame = None
+        self.running = False
+        self.frame_lock = threading.Lock()
+        self.video_thread = None
 
-    def initialize_camera(self):
-        """初始化摄像头"""
-        self.cap = cv2.VideoCapture(self.camera_source)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"无法打开摄像头 {self.camera_source}")
+    def start_video_stream(self):
+        """启动视频流线程"""
+        if self.video_thread is None or not self.video_thread.is_alive():
+            self.running = True
+            self.video_thread = threading.Thread(
+                target=self.video_reader, 
+                args=(self.camera_source,),
+                daemon=True
+            )
+            self.video_thread.start()
 
-        # 设置摄像头参数
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    def stop_video_stream(self):
+        """停止视频流"""
+        self.running = False
+        if self.video_thread and self.video_thread.is_alive():
+            self.video_thread.join()
+
+    def video_reader(self, url):
+        """持续读取视频流的线程函数"""
+        cap = cv2.VideoCapture(url)
+
+        if not cap.isOpened():
+            print("无法打开视频流")
+            return
+
+        while self.running:
+            ret, frame = cap.read()
+            if not ret:
+                print("无法读取帧，尝试重新连接...")
+                time.sleep(1)
+                cap.release()
+                cap = cv2.VideoCapture(url)
+                continue
+
+            with self.frame_lock:
+                self.latest_frame = frame.copy()
+
+            # 控制帧率（可选）
+            time.sleep(0.03)  # 约 30 FPS
+
+        cap.release()
 
     def capture_frame(self):
         """捕获一帧图像"""
-        if self.cap is None:
-            self.initialize_camera()
-
-        ret, frame = self.cap.read()
-        if ret:
+        if not self.running:
+            self.start_video_stream()
+            
+        # 等待直到获取到帧或超时
+        timeout = time.time() + 5  # 5秒超时
+        while self.latest_frame is None and time.time() < timeout:
+            time.sleep(0.1)
+            
+        if self.latest_frame is not None:
             # 转换BGR到RGB (OpenCV使用BGR，但Gradio需要RGB)
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_rgb = cv2.cvtColor(self.latest_frame, cv2.COLOR_BGR2RGB)
             return frame_rgb
         return None
 
@@ -179,8 +223,7 @@ class WebcamApp:
 
     def cleanup(self):
         """清理资源"""
-        if self.cap is not None:
-            self.cap.release()
+        self.stop_video_stream()
 
 
 def get_local_ip():
@@ -350,10 +393,10 @@ def main(camera_source, port, host):
     try:
         print("启动摄像头Web界面...")
         print(f"摄像头设备: {camera_source}")
-        
+
         # 获取本机IP地址
         local_ip = get_local_ip()
-        
+
         print(f"访问地址: http://{host}:{port}")
         print(f"本机IP访问地址: http://{local_ip}:{port}")
         print(f"局域网内其他设备可通过以下地址访问: http://{local_ip}:{port}")
