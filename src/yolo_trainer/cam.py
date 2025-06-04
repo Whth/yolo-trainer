@@ -191,7 +191,9 @@ class WebcamApp:
 
 @click.command()
 @click.help_option("-h", "--help")
-@click.option("--camera-source", "-c", default="0", help="摄像头设备索引或URL (默认: 0)")
+@click.option(
+    "--camera-source", "-c", default="0", help="摄像头设备索引或URL (默认: 0)"
+)
 @click.option("--port", "-p", default=7860, help="Gradio服务端口 (默认: 7860)")
 @click.option("--host", "-s", default="0.0.0.0", help="服务主机地址 (默认: 0.0.0.0)")
 def main(camera_source, port, host):
@@ -260,7 +262,7 @@ def main(camera_source, port, host):
                 camera_output = gr.Image(label="摄像头画面", type="numpy")
                 with gr.Row():
                     refresh_btn = gr.Button("刷新画面", variant="primary")
-                    auto_refresh_btn = gr.Button("自动刷新 (0.2s)", variant="secondary")
+                    auto_refresh_btn = gr.Button("自动刷新 (1s)", variant="secondary")
                 auto_refresh_msg = gr.Textbox(label="自动刷新状态", interactive=False)
 
             with gr.Column():
@@ -344,7 +346,7 @@ def main(camera_source, port, host):
         )
 
         # 自动刷新定时器
-        timer = gr.Timer(0.2)
+        timer = gr.Timer(1)
         timer.tick(
             fn=lambda: app.capture_frame() if app.auto_refresh_enabled else None,
             outputs=[camera_output],
