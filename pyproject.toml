@@ -1,0 +1,23 @@
+[project]
+name = "yolo-trainer"
+version = "0.1.0"
+author = "Whth"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+
+    "click>=8.2.1",
+    "gradio>=5.31.0",
+    "opencv-python-headless>=4.11.0.86",
+
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/yolo_trainer"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+dcap = "yolo_trainer.cam:main"
