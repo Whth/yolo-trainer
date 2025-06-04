@@ -365,8 +365,8 @@ def main(camera_source, port, host, auto_refresh, refresh_interval):
                 camera_output = gr.Image(label="摄像头画面", type="numpy")
                 with gr.Row():
                     refresh_btn = gr.Button("刷新画面", variant="primary")
-                    auto_refresh_toggle = gr.Checkbox(
-                        label="自动刷新", value=auto_refresh
+                    auto_refresh_toggle = gr.Button(
+                        "自动刷新", value=auto_refresh, variant="secondary"
                     )
                     refresh_interval_slider = gr.Slider(
                         minimum=0.1,
@@ -430,7 +430,7 @@ def main(camera_source, port, host, auto_refresh, refresh_interval):
         refresh_btn.click(fn=refresh_camera, outputs=[camera_output])
         
         # 自动刷新相关事件
-        auto_refresh_toggle.change(
+        auto_refresh_toggle.click(
             fn=toggle_auto_refresh,
             inputs=[auto_refresh_toggle, refresh_interval_slider],
             outputs=[auto_refresh_status],
