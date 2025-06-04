@@ -24,12 +24,6 @@ class WebcamApp:
         self.running = False
         self.frame_lock = threading.Lock()
         self.video_thread = None
-        
-        # 用于自动刷新控制
-        self.auto_refresh = False
-        self.refresh_thread = None
-        self.refresh_interval = 1.0  # 默认1秒刷新一次
-        self.refresh_callbacks = []  # 存储UI刷新回调
 
     def start_video_stream(self):
         """启动视频流线程"""
@@ -47,49 +41,6 @@ class WebcamApp:
         self.running = False
         if self.video_thread and self.video_thread.is_alive():
             self.video_thread.join()
-
-    def register_refresh_callback(self, callback):
-        """注册UI刷新回调函数"""
-        if callback not in self.refresh_callbacks:
-            self.refresh_callbacks.append(callback)
-
-    def start_auto_refresh(self, interval=1.0):
-        """启动自动刷新线程"""
-        self.refresh_interval = interval
-        if not self.auto_refresh:
-            self.auto_refresh = True
-            if self.refresh_thread is None or not self.refresh_thread.is_alive():
-                self.refresh_thread = threading.Thread(
-                    target=self.auto_refresh_loop,
-                    daemon=True
-                )
-                self.refresh_thread.start()
-            return "自动刷新已启动"
-        return "自动刷新已在运行中"
-
-    def stop_auto_refresh(self):
-        """停止自动刷新"""
-        self.auto_refresh = False
-        if self.refresh_thread and self.refresh_thread.is_alive():
-            self.refresh_thread.join(timeout=1.0)
-        return "自动刷新已停止"
-
-    def auto_refresh_loop(self):
-        """自动刷新循环线程函数"""
-        while self.auto_refresh:
-            # 仅在running状态下进行刷新，避免不必要的连接
-            if not self.running:
-                self.start_video_stream()
-                time.sleep(0.5)  # 等待视频流启动
-            
-            # 触发所有注册的UI刷新回调
-            for callback in self.refresh_callbacks[:]:
-                try:
-                    callback()
-                except Exception as e:
-                    print(f"刷新回调执行失败: {e}")
-                    
-            time.sleep(self.refresh_interval)
 
     def video_reader(self, url):
         """持续读取视频流的线程函数"""
@@ -271,9 +222,6 @@ class WebcamApp:
 
     def cleanup(self):
         """清理资源"""
-        self.auto_refresh = False
-        if self.refresh_thread and self.refresh_thread.is_alive():
-            self.refresh_thread.join(timeout=1.0)
         self.stop_video_stream()
 
 
@@ -302,13 +250,7 @@ def get_local_ip():
 )
 @click.option("--port", "-p", default=7860, help="Gradio服务端口 (默认: 7860)")
 @click.option("--host", "-s", default="0.0.0.0", help="服务主机地址 (默认: 0.0.0.0)")
-@click.option(
-    "--auto-refresh", "-a", is_flag=True, help="启用自动刷新 (默认: 关闭)"
-)
-@click.option(
-    "--refresh-interval", "-i", default=1.0, type=float, help="自动刷新间隔，单位秒 (默认: 1.0)"
-)
-def main(camera_source, port, host, auto_refresh, refresh_interval):
+def main(camera_source, port, host):
     """启动摄像头Web界面"""
 
     # 尝试将camera_source转换为整数，如果失败则保持为字符串（URL）
@@ -323,13 +265,6 @@ def main(camera_source, port, host, auto_refresh, refresh_interval):
     def refresh_camera():
         """刷新摄像头画面"""
         return app.capture_frame()
-
-    def toggle_auto_refresh(active, interval=1.0):
-        """切换自动刷新状态"""
-        if active:
-            return app.start_auto_refresh(interval)
-        else:
-            return app.stop_auto_refresh()
 
     def screenshot_handler():
         """处理截图"""
@@ -374,23 +309,7 @@ def main(camera_source, port, host, auto_refresh, refresh_interval):
         with gr.Row():
             with gr.Column():
                 camera_output = gr.Image(label="摄像头画面", type="numpy")
-                with gr.Row():
-                    refresh_btn = gr.Button("刷新画面", variant="primary")
-                    auto_refresh_toggle = gr.Button(
-                        "自动刷新", value=auto_refresh, variant="secondary"
-                    )
-                    refresh_interval_slider = gr.Slider(
-                        minimum=0.1,
-                        maximum=10.0,
-                        value=refresh_interval,
-                        step=0.1,
-                        label="刷新间隔 (秒)",
-                    )
-                auto_refresh_status = gr.Textbox(
-                    label="自动刷新状态",
-                    value="自动刷新已关闭" if not auto_refresh else "自动刷新已开启",
-                    interactive=False,
-                )
+                refresh_btn = gr.Button("刷新画面", variant="primary")
 
             with gr.Column():
                 screenshot_btn = gr.Button("截图", variant="secondary")
@@ -439,68 +358,30 @@ def main(camera_source, port, host, auto_refresh, refresh_interval):
 
         # 绑定事件
         refresh_btn.click(fn=refresh_camera, outputs=[camera_output])
-        
-        # 自动刷新相关事件
-        auto_refresh_toggle.click(
-            fn=toggle_auto_refresh,
-            inputs=[auto_refresh_toggle, refresh_interval_slider],
-            outputs=[auto_refresh_status],
-        )
-        
-        # 设置自动刷新间隔
-        refresh_interval_slider.change(
-            fn=lambda x, y: toggle_auto_refresh(x, y) if x else "自动刷新已关闭",
-            inputs=[auto_refresh_toggle, refresh_interval_slider],
-            outputs=[auto_refresh_status],
-        )
-
         screenshot_btn.click(
             fn=screenshot_handler,
             outputs=[screenshot_msg, camera_output, screenshot_list],
         )
-
         download_btn.click(
             fn=download_handler,
             outputs=[download_file, download_msg, zip_archives_list],
         )
-
         download_all_zips_btn.click(
             fn=download_all_zips_handler, outputs=[download_all_file, download_all_msg]
         )
-
         clear_btn.click(fn=clear_handler, outputs=[clear_msg, screenshot_list])
-
         clear_zips_btn.click(
             fn=clear_zips_handler, outputs=[clear_zips_msg, zip_archives_list]
         )
-
         refresh_list_btn.click(fn=update_screenshots_list, outputs=[screenshot_list])
-
         refresh_zip_btn.click(fn=update_zip_archives_list, outputs=[zip_archives_list])
 
         # 页面加载时自动刷新一次
-        interface.load(
-            fn=lambda: (app.capture_frame(), app.get_zip_archives_list()),
-            outputs=[camera_output, zip_archives_list],
-        )
-        
-        # 创建UI自动刷新函数
-        def ui_refresh_camera():
-            return gr.update(value=app.capture_frame())
-        
-        # 定时自动刷新
-        if auto_refresh:
-            app.start_auto_refresh(refresh_interval)
-            # 注册UI刷新回调
-            app.register_refresh_callback(lambda: interface.queue(ui_refresh_camera, outputs=camera_output))
-            # 删除之前的click事件，改为使用自定义刷新逻辑
-            refresh_btn.click(fn=refresh_camera, outputs=[camera_output], every=refresh_interval)
+        interface.load(fn=lambda: app.capture_frame(), outputs=[camera_output])
 
     try:
         print("启动摄像头Web界面...")
         print(f"摄像头设备: {camera_source}")
-        if auto_refresh:
-            print(f"自动刷新已启用，间隔: {refresh_interval}秒")
 
         # 获取本机IP地址
         local_ip = get_local_ip()
