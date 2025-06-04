@@ -6,6 +6,7 @@ import datetime
 from pathlib import Path
 import tempfile
 import gradio as gr
+import socket
 
 
 class WebcamApp:
@@ -14,7 +15,6 @@ class WebcamApp:
         self.cap = None
         self.screenshots_dir = "screenshots"
         self.zip_dir = "zip_archives"
-        self.auto_refresh_enabled = False
         Path(self.screenshots_dir).mkdir(exist_ok=True)
         Path(self.zip_dir).mkdir(exist_ok=True)
 
@@ -177,16 +177,28 @@ class WebcamApp:
 
         return f"已清理 {count} 个压缩包"
 
-    def toggle_auto_refresh(self):
-        """切换自动刷新状态"""
-        self.auto_refresh_enabled = not self.auto_refresh_enabled
-        status = "开启" if self.auto_refresh_enabled else "关闭"
-        return f"自动刷新已{status}"
-
     def cleanup(self):
         """清理资源"""
         if self.cap is not None:
             self.cap.release()
+
+
+def get_local_ip():
+    """获取本机局域网IP地址"""
+    try:
+        # 连接到一个外部地址来获取本机IP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+        return local_ip
+    except Exception:
+        # 如果上述方法失败，尝试获取主机名对应的IP
+        try:
+            hostname = socket.gethostname()
+            local_ip = socket.gethostbyname(hostname)
+            return local_ip
+        except Exception:
+            return "127.0.0.1"
 
 
 @click.command()
@@ -211,11 +223,6 @@ def main(camera_source, port, host):
     def refresh_camera():
         """刷新摄像头画面"""
         return app.capture_frame()
-
-    def auto_refresh_handler():
-        """处理自动刷新"""
-        message = app.toggle_auto_refresh()
-        return message
 
     def screenshot_handler():
         """处理截图"""
@@ -260,10 +267,7 @@ def main(camera_source, port, host):
         with gr.Row():
             with gr.Column():
                 camera_output = gr.Image(label="摄像头画面", type="numpy")
-                with gr.Row():
-                    refresh_btn = gr.Button("刷新画面", variant="primary")
-                    auto_refresh_btn = gr.Button("自动刷新 (1s)", variant="secondary")
-                auto_refresh_msg = gr.Textbox(label="自动刷新状态", interactive=False)
+                refresh_btn = gr.Button("刷新画面", variant="primary")
 
             with gr.Column():
                 screenshot_btn = gr.Button("截图", variant="secondary")
@@ -313,8 +317,6 @@ def main(camera_source, port, host):
         # 绑定事件
         refresh_btn.click(fn=refresh_camera, outputs=[camera_output])
 
-        auto_refresh_btn.click(fn=auto_refresh_handler, outputs=[auto_refresh_msg])
-
         screenshot_btn.click(
             fn=screenshot_handler,
             outputs=[screenshot_msg, camera_output, screenshot_list],
@@ -345,17 +347,16 @@ def main(camera_source, port, host):
             outputs=[camera_output, zip_archives_list],
         )
 
-        # 自动刷新定时器
-        timer = gr.Timer(1)
-        timer.tick(
-            fn=lambda: app.capture_frame() if app.auto_refresh_enabled else None,
-            outputs=[camera_output],
-        )
-
     try:
         print("启动摄像头Web界面...")
         print(f"摄像头设备: {camera_source}")
+        
+        # 获取本机IP地址
+        local_ip = get_local_ip()
+        
         print(f"访问地址: http://{host}:{port}")
+        print(f"本机IP访问地址: http://{local_ip}:{port}")
+        print(f"局域网内其他设备可通过以下地址访问: http://{local_ip}:{port}")
 
         interface.launch(server_name=host, server_port=port, share=False, debug=False)
     finally:
